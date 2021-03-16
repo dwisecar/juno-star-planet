@@ -1,0 +1,262 @@
+﻿using UnityEngine;
+using System.Collections;
+using System.Collections.Generic;
+using MoreMountains.Tools;
+using System;
+
+namespace MoreMountains.CorgiEngine
+{
+    [AddComponentMenu("Corgi Engine/Weapons/Particle Accelerator")]
+    /// <summary>
+    /// This base class, meant to be extended (see ProjectileWeapon.cs for an example of that) handles rate of fire (rate of use actually), and ammo reloading
+    /// </summary>
+    [SelectionBase]
+    public class HyperBeam : Weapon
+    {
+        [Header("Position")]
+        public AudioClip EmitterSfx;
+        public ParticleSystem ParticleAcceleratorEmitter;
+
+        public LucyHandleWeapon LucyHandleWeapon { get; set; }
+        protected AudioSource _inProgressSfxSource;
+
+        [Header("Spawn")]
+        /// the offset position at which the projectile will spawn
+        public Vector3 ProjectileSpawnOffset = Vector3.zero;
+        /// the number of projectiles to spawn per shot
+        public int ProjectilesPerShot = 1;
+        /// the spread (in degrees) to apply randomly (or not) on each angle when spawning a projectile
+        public Vector3 Spread = Vector3.zero;
+        /// whether or not the weapon should rotate to align with the spread angle
+        public bool RotateWeaponOnSpread = false;
+        /// whether or not the spread should be random (if not it'll be equally distributed)
+        public bool RandomSpread = true;
+
+        [ReadOnly]
+        public Vector3 SpawnPosition = Vector3.zero;
+
+        public MMObjectPooler ObjectPooler { get; set; }
+        protected Vector3 _flippedProjectileSpawnOffset;
+        protected Vector3 _randomSpreadDirection;
+        protected bool _poolInitialized = false;
+        protected bool _sfxStarted;
+
+        /// <summary>
+        /// Initialize this weapon
+        /// </summary>
+        public override void Initialization()
+        {
+            base.Initialization();
+            _aimableWeapon = GetComponent<WeaponAim>();
+
+            if (!_poolInitialized)
+            {
+                if (GetComponent<MMMultipleObjectPooler>() != null)
+                {
+                    ObjectPooler = GetComponent<MMMultipleObjectPooler>();
+                }
+                if (GetComponent<MMSimpleObjectPooler>() != null)
+                {
+                    ObjectPooler = GetComponent<MMSimpleObjectPooler>();
+                }
+                if (ObjectPooler == null)
+                {
+                    Debug.LogWarning(this.name + " : no object pooler (simple or multiple) is attached to this Projectile Weapon, it won't be able to shoot anything.");
+                    return;
+                }
+                if (FlipWeaponOnCharacterFlip)
+                {
+                    _flippedProjectileSpawnOffset = ProjectileSpawnOffset;
+                    _flippedProjectileSpawnOffset.y = -_flippedProjectileSpawnOffset.y;
+                }
+                _poolInitialized = true;
+            }
+        }
+
+        /// <summary>
+        /// Sets the weapon's owner
+        /// </summary>
+        /// <param name="newOwner">New owner.</param>
+        public override void SetOwner(Character newOwner, CharacterHandleWeapon handleWeapon)
+        {
+            Owner = newOwner;
+            if (Owner != null)
+            {
+                CharacterHandleWeapon = handleWeapon;
+                _characterGravity = Owner.GetComponent<CharacterGravity>();
+                _characterHorizontalMovement = Owner.GetComponent<CharacterHorizontalMovement>();
+                _controller = Owner.GetComponent<CorgiController>();
+                LucyHandleWeapon = Owner.GetComponent<LucyHandleWeapon>();
+
+            }
+        }
+
+        protected override void WeaponUse()
+        {
+            base.WeaponUse();
+            LucyHandleWeapon.ShootingHyperBeam = true;
+
+            DetermineSpawnPosition();
+
+            for (int i = 0; i < ProjectilesPerShot; i++)
+            {
+                SpawnProjectile(SpawnPosition, i, ProjectilesPerShot, true);
+            }
+            PlayEmitterSfx();
+
+        }
+
+        public override void WeaponInputStop()
+        {
+            if (_reloading)
+            {
+                return;
+            }
+            _triggerReleased = true;
+
+            LucyHandleWeapon.ShootingHyperBeam = false;
+
+
+            if ((_characterHorizontalMovement != null) && (ModifyMovementWhileAttacking))
+            {
+                _characterHorizontalMovement.MovementSpeedMultiplier = _movementMultiplierStorage;
+            }
+        }
+
+        /// <summary>
+		/// Spawns a new object and positions/resizes it
+		/// </summary>
+		public virtual GameObject SpawnProjectile(Vector3 spawnPosition, int projectileIndex, int totalProjectiles, bool triggerObjectActivation = true)
+        {
+            /// we get the next object in the pool and make sure it's not null
+            GameObject nextGameObject = ObjectPooler.GetPooledGameObject();
+
+            // mandatory checks
+            if (nextGameObject == null) { return null; }
+            if (nextGameObject.GetComponent<MMPoolableObject>() == null)
+            {
+                throw new Exception(gameObject.name + " is trying to spawn objects that don't have a PoolableObject component.");
+            }
+            // we position the object
+            nextGameObject.transform.position = spawnPosition;
+            // we set its direction
+
+            Projectile projectile = nextGameObject.GetComponent<Projectile>();
+            if (projectile != null)
+            {
+                projectile.SetWeapon(this);
+                if (Owner != null)
+                {
+                    projectile.SetOwner(Owner.gameObject);
+                }
+            }
+            // we activate the object
+            nextGameObject.gameObject.SetActive(true);
+
+
+            if (projectile != null)
+            {
+                if (RandomSpread)
+                {
+                    _randomSpreadDirection.x = UnityEngine.Random.Range(-Spread.x, Spread.x);
+                    _randomSpreadDirection.y = UnityEngine.Random.Range(-Spread.y, Spread.y);
+                    _randomSpreadDirection.z = UnityEngine.Random.Range(-Spread.z, Spread.z);
+                }
+                else
+                {
+                    if (totalProjectiles > 1)
+                    {
+                        _randomSpreadDirection.x = MMMaths.Remap(projectileIndex, 0, totalProjectiles - 1, -Spread.x, Spread.x);
+                        _randomSpreadDirection.y = MMMaths.Remap(projectileIndex, 0, totalProjectiles - 1, -Spread.y, Spread.y);
+                        _randomSpreadDirection.z = MMMaths.Remap(projectileIndex, 0, totalProjectiles - 1, -Spread.z, Spread.z);
+                    }
+                    else
+                    {
+                        _randomSpreadDirection = Vector3.zero;
+                    }
+                }
+
+                Quaternion spread = Quaternion.Euler(_randomSpreadDirection);
+                projectile.SetDirection(spread * transform.right * (Flipped ? -1 : 1), transform.rotation, Owner.IsFacingRight);
+                if (RotateWeaponOnSpread)
+                {
+                    this.transform.rotation = this.transform.rotation * spread;
+                }
+            }
+
+            if (triggerObjectActivation)
+            {
+                if (nextGameObject.GetComponent<MMPoolableObject>() != null)
+                {
+                    nextGameObject.GetComponent<MMPoolableObject>().TriggerOnSpawnComplete();
+                }
+            }
+
+            return (nextGameObject);
+
+        }
+
+        /// <summary>
+        /// Determines the spawn position based on the spawn offset and whether or not the weapon is flipped
+        /// </summary>
+        public virtual void DetermineSpawnPosition()
+        {
+            if (Flipped)
+            {
+                if (FlipWeaponOnCharacterFlip)
+                {
+                    SpawnPosition = this.transform.position - this.transform.rotation * _flippedProjectileSpawnOffset;
+                }
+                else
+                {
+                    SpawnPosition = this.transform.position - this.transform.rotation * ProjectileSpawnOffset;
+                }
+            }
+            else
+            {
+                SpawnPosition = this.transform.position + this.transform.rotation * ProjectileSpawnOffset;
+            }
+        }
+
+        /// <summary>
+        /// When the weapon is selected, draws a circle at the spawn's position
+        /// </summary>
+        protected virtual void OnDrawGizmosSelected()
+        {
+            DetermineSpawnPosition();
+
+            Gizmos.color = Color.white;
+            Gizmos.DrawWireSphere(SpawnPosition, 0.2f);
+        }
+
+        public override void TurnWeaponOff()
+        {
+            base.TurnWeaponOff();
+            StopEmitterSfx();
+        }
+
+        protected void PlayEmitterSfx()
+        {
+            if (EmitterSfx != null)
+            {
+                if (_inProgressSfxSource == null)
+                {
+                    _inProgressSfxSource = SoundManager.Instance.PlaySound(EmitterSfx, transform.position, true);
+
+                }
+            }
+        }
+
+        protected void StopEmitterSfx()
+        {
+            if (EmitterSfx != null)
+            {
+                SoundManager.Instance.StopLoopingSound(_inProgressSfxSource);
+                _inProgressSfxSource = null;
+            }
+        }
+
+
+    }
+
+}

@@ -1,0 +1,19 @@
+fileFormatVersion: 2
+guid: bf644368be5d148409936f8c5a3fbc21
+timeCreated: 1527608864
+licenseType: Free
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - AbilityStartSfx: {instanceID: 0}
+  - AbilityInProgressSfx: {instanceID: 0}
+  - AbilityStopSfx: {instanceID: 0}
+  - InitialMeleeWeapon: {fileID: 114946880299364078, guid: 12664c4112dad4711816174992556fe1,
+      type: 2}
+  - WeaponAttachment: {instanceID: 0}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
